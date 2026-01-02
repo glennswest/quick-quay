@@ -81,6 +81,38 @@ if [ ! -d "$QUAY_INSTALL" ]; then
     git clone --depth 1 https://github.com/quay/quay.git $QUAY_INSTALL
 fi
 
+echo "=== Patching web.py to enable v2 registry API ==="
+cat > $QUAY_INSTALL/web.py << 'WEBPY'
+from app import app as application
+from endpoints.api import api_bp
+from endpoints.bitbuckettrigger import bitbuckettrigger
+from endpoints.githubtrigger import githubtrigger
+from endpoints.gitlabtrigger import gitlabtrigger
+from endpoints.keyserver import key_server
+from endpoints.oauth.login import oauthlogin
+from endpoints.oauth.robot_identity_federation import federation_bp
+from endpoints.realtime import realtime
+from endpoints.web import web
+from endpoints.webhooks import webhooks
+from endpoints.wellknown import wellknown
+from endpoints.v2 import v2_bp
+from endpoints.v1 import v1_bp
+
+application.register_blueprint(web)
+application.register_blueprint(githubtrigger, url_prefix="/oauth2")
+application.register_blueprint(gitlabtrigger, url_prefix="/oauth2")
+application.register_blueprint(oauthlogin, url_prefix="/oauth2")
+application.register_blueprint(federation_bp, url_prefix="/oauth2")
+application.register_blueprint(bitbuckettrigger, url_prefix="/oauth1")
+application.register_blueprint(api_bp, url_prefix="/api")
+application.register_blueprint(webhooks, url_prefix="/webhooks")
+application.register_blueprint(realtime, url_prefix="/realtime")
+application.register_blueprint(key_server, url_prefix="/keys")
+application.register_blueprint(wellknown, url_prefix="/.well-known")
+application.register_blueprint(v2_bp, url_prefix="/v2")
+application.register_blueprint(v1_bp, url_prefix="/v1")
+WEBPY
+
 echo "=== Creating Python virtual environment ==="
 cd $QUAY_INSTALL
 # Explicitly use pyenv's Python to create the venv (not system Python 3.14)

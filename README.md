@@ -412,6 +412,29 @@ NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=3072" npm run build
 
 ---
 
+### Issue 15: Docker Registry v2 API Not Registered
+
+**Problem:** The Docker Registry v2 API endpoints (`/v2/`, `/v2/_catalog`, etc.) return 404 errors. Docker/Podman clients cannot push or pull images.
+
+**Error:**
+```
+curl http://registry.gw.lo/v2/_catalog
+404 Not Found
+```
+
+**Root cause:** The upstream `web.py` WSGI entrypoint does not register the `v2_bp` (Docker Registry v2 API) or `v1_bp` (legacy Docker v1 API) blueprints. Only the web UI and OAuth endpoints are registered.
+
+**Solution:** Patch `web.py` to include the registry API blueprints:
+```python
+from endpoints.v2 import v2_bp
+from endpoints.v1 import v1_bp
+
+application.register_blueprint(v2_bp, url_prefix="/v2")
+application.register_blueprint(v1_bp, url_prefix="/v1")
+```
+
+---
+
 ## Configuration
 
 ### Quay Configuration (`/opt/quay/conf/stack/config.yaml`)
