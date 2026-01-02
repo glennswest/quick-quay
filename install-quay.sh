@@ -100,7 +100,8 @@ echo "=== Building frontend ==="
 cd $QUAY_INSTALL
 npm install
 # Node.js 22 requires legacy OpenSSL provider for webpack
-NODE_OPTIONS=--openssl-legacy-provider npm run build
+# Increase heap size for webpack build (requires ~3GB RAM)
+NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=3072" npm run build
 
 echo "=== Generating secrets ==="
 SECRET_KEY=$(openssl rand -hex 32)

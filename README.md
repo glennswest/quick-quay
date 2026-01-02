@@ -394,6 +394,24 @@ sudo -u postgres psql -d quay -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
 ---
 
+### Issue 14: Webpack Build Out of Memory
+
+**Problem:** Frontend build fails with "JavaScript heap out of memory" error during webpack optimization phase.
+
+**Error:**
+```
+FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+```
+
+**Root cause:** The webpack build requires more memory than Node.js allocates by default, especially during the TerserPlugin optimization phase.
+
+**Solution:** Increase Node.js heap size and ensure system has at least 4GB RAM:
+```bash
+NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=3072" npm run build
+```
+
+---
+
 ## Configuration
 
 ### Quay Configuration (`/opt/quay/conf/stack/config.yaml`)
@@ -530,7 +548,7 @@ quay-native-install/
 ## Requirements
 
 - **OS:** Fedora 43 (tested on LXC container)
-- **RAM:** 2GB minimum (4GB recommended)
+- **RAM:** 4GB minimum (webpack frontend build requires ~3GB heap)
 - **Storage:** 8GB for OS + additional for container images
 - **Network:** Port 80 accessible
 
