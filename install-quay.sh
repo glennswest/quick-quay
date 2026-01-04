@@ -135,6 +135,14 @@ npm install
 # Increase heap size for webpack build (requires ~3GB RAM)
 NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=3072" npm run build
 
+echo "=== Generating TLS certificates ==="
+mkdir -p /certs
+openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+    -keyout /certs/registry.key -out /certs/registry.crt \
+    -subj "/CN=registry.gw.lo" \
+    -addext "subjectAltName=DNS:registry.gw.lo"
+chmod 600 /certs/registry.key
+
 echo "=== Generating secrets ==="
 SECRET_KEY=$(openssl rand -hex 32)
 DB_SECRET_KEY=$(openssl rand -hex 32)
@@ -175,7 +183,7 @@ FEATURE_MAILING: false
 FEATURE_REQUIRE_TEAM_INVITE: true
 FEATURE_SECURITY_NOTIFICATIONS: false
 FEATURE_USER_CREATION: true
-PREFERRED_URL_SCHEME: http
+PREFERRED_URL_SCHEME: https
 REGISTRY_TITLE: Quay Container Registry
 REGISTRY_TITLE_SHORT: Quay
 SECRET_KEY: "${SECRET_KEY}"
@@ -223,6 +231,16 @@ cat > /etc/nginx/conf.d/quay.conf << 'EOF'
 server {
     listen 80;
     server_name registry.gw.lo;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name registry.gw.lo;
+
+    ssl_certificate /certs/registry.crt;
+    ssl_certificate_key /certs/registry.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
     client_max_body_size 8G;
 
@@ -366,10 +384,11 @@ systemctl start nginx
 sleep 5
 
 # Verify
-if curl -s -o /dev/null -w '%{http_code}' http://localhost:${QUAY_PORT}/ | grep -q 200; then
+if curl -sk -o /dev/null -w '%{http_code}' https://localhost/ | grep -q 200; then
     echo ""
     echo "=== Installation Complete ==="
-    echo "Quay is running on http://registry.gw.lo"
+    echo "Quay is running on https://registry.gw.lo"
+    echo "TLS certificate at /certs/registry.crt"
     echo ""
     echo "Default login:"
     echo "  Username: admin"
