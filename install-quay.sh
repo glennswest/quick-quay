@@ -226,6 +226,99 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
+echo "=== Building React UI (beta) ==="
+cd $QUAY_INSTALL/web
+npm install
+ASSET_PATH=/ REACT_QUAY_APP_API_URL=https://registry.gw.lo REACT_APP_QUAY_DOMAIN=registry.gw.lo \
+    NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=3072" npm run build
+
+echo "=== Patching endpoints for React UI support ==="
+# Add /switch-to-old-ui endpoint and cookie-based UI switching to web.py
+cd $QUAY_INSTALL
+cat > /tmp/patch_web.py << 'PATCHEOF'
+import re
+
+with open('endpoints/web.py', 'r') as f:
+    content = f.read()
+
+# Add switch-to-old-ui endpoint before signin route
+switch_endpoint = '''
+@web.route("/switch-to-old-ui")
+@no_cache
+def switch_to_old_ui():
+    from flask import redirect, make_response
+    resp = make_response(redirect("/"))
+    resp.set_cookie("patternfly", "", expires=0, path="/")
+    return resp
+
+'''
+
+# Find the signin route and insert before it
+if '/switch-to-old-ui' not in content:
+    content = re.sub(
+        r'(@web\.route\("/signin/"\))',
+        switch_endpoint + r'\1',
+        content
+    )
+
+# Modify index() to serve React UI based on patternfly cookie
+old_index = '''@web.route("/", methods=["GET"], defaults={"path": ""})
+@no_cache
+def index(path, **kwargs):
+    return render_page_template_with_routedata("index.html", **kwargs)'''
+
+new_index = '''@web.route("/", methods=["GET"], defaults={"path": ""})
+@no_cache
+def index(path, **kwargs):
+    from flask import request, send_from_directory
+    # Check patternfly cookie for React UI preference
+    patternfly_cookie = request.cookies.get("patternfly", "")
+    use_react = patternfly_cookie in ["true", "react"]
+    if not patternfly_cookie:
+        use_react = app.config.get("DEFAULT_UI", "angular").lower() == "react"
+    if use_react:
+        return send_from_directory("/opt/quay/web/dist", "index.html")
+    return render_page_template_with_routedata("index.html", **kwargs)'''
+
+if 'patternfly_cookie' not in content:
+    content = content.replace(old_index, new_index)
+
+with open('endpoints/web.py', 'w') as f:
+    f.write(content)
+
+print('Patched endpoints/web.py')
+PATCHEOF
+python /tmp/patch_web.py
+
+# Patch React UI logout to clear cookie and return to Angular UI
+cat > /tmp/patch_react.py << 'PATCHEOF'
+import re
+
+toolbar_file = '/opt/quay/web/src/components/header/HeaderToolbar.tsx'
+with open(toolbar_file, 'r') as f:
+    content = f.read()
+
+# Replace the logout redirect to clear cookie and go to root
+old_redirect = "window.location.href = '/signin';"
+new_redirect = '''// Delete cookie completely to disable React UI
+          document.cookie = "patternfly=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+          setTimeout(() => { window.location.href = '/'; }, 200);'''
+
+if 'patternfly' not in content:
+    content = content.replace(old_redirect, new_redirect)
+    with open(toolbar_file, 'w') as f:
+        f.write(content)
+    print('Patched HeaderToolbar.tsx')
+else:
+    print('HeaderToolbar.tsx already patched')
+PATCHEOF
+python /tmp/patch_react.py
+
+# Rebuild React UI with the patch
+cd $QUAY_INSTALL/web
+ASSET_PATH=/ REACT_QUAY_APP_API_URL=https://registry.gw.lo REACT_APP_QUAY_DOMAIN=registry.gw.lo \
+    NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=3072" npm run build
+
 echo "=== Configuring nginx ==="
 cat > /etc/nginx/conf.d/quay.conf << 'EOF'
 server {
@@ -244,6 +337,34 @@ server {
 
     client_max_body_size 8G;
 
+    # React UI static assets (only main and vendor bundles at root)
+    location = /main.bundle.js {
+        root /opt/quay/web/dist;
+        try_files $uri =404;
+    }
+    location = /vendor.bundle.js {
+        root /opt/quay/web/dist;
+        try_files $uri =404;
+    }
+    location = /main.css {
+        root /opt/quay/web/dist;
+        try_files $uri =404;
+    }
+    location = /vendor.css {
+        root /opt/quay/web/dist;
+        try_files $uri =404;
+    }
+
+    # React UI images/assets
+    location /images/ {
+        alias /opt/quay/web/dist/images/;
+    }
+
+    location /assets/ {
+        alias /opt/quay/web/dist/assets/;
+    }
+
+    # Legacy static files (Angular)
     location /static/ {
         alias /opt/quay/static/;
     }

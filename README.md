@@ -552,6 +552,46 @@ org = model.organization.create_organization('openshift', 'openshift@registry.gw
 
 ---
 
+### Issue 21: React UI (Beta) Assets Conflict with Angular UI
+
+**Problem:** After enabling the React UI toggle, the Angular UI breaks with "The Quay application could not be loaded" error. The console shows 404 errors for Angular bundle files like `main-quay-frontend-*.bundle.js`.
+
+**Root cause:** The nginx configuration used a regex `\.(bundle\.js|...)$` to serve React assets from `/opt/quay/web/dist/`. This intercepted ALL `.bundle.js` requests, including Angular's bundles which have different names and are served via Flask from `/opt/quay/static/`.
+
+**Solution:** Use exact location matches for React bundles instead of regex:
+```nginx
+# React UI static assets (only main and vendor bundles at root)
+location = /main.bundle.js {
+    root /opt/quay/web/dist;
+    try_files $uri =404;
+}
+location = /vendor.bundle.js {
+    root /opt/quay/web/dist;
+    try_files $uri =404;
+}
+```
+
+This ensures Angular's `main-quay-frontend-*.bundle.js` files go to Flask while React's `main.bundle.js` is served directly by nginx.
+
+---
+
+### Issue 22: React UI Logout Doesn't Return to Angular UI
+
+**Problem:** After logging out from the React UI, users are redirected to `/signin` which still serves the React UI instead of returning to the Angular UI.
+
+**Root cause:** The React logout redirected to `/signin` before properly clearing the `patternfly` cookie. The cookie controls which UI is served.
+
+**Solution:** Patch the React UI's HeaderToolbar.tsx to clear the cookie and redirect to root with a small delay:
+```typescript
+// In logout handler
+document.cookie = "patternfly=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+setTimeout(() => { window.location.href = '/'; }, 200);
+```
+
+Also add a server-side `/switch-to-old-ui` endpoint that clears the cookie and redirects.
+
+---
+
 ## Configuration
 
 ### Quay Configuration (`/opt/quay/conf/stack/config.yaml`)
@@ -608,6 +648,44 @@ server {
     }
 }
 ```
+
+## Beta UI (React)
+
+Quay includes both the legacy Angular UI and a newer React-based UI (beta). The installation script builds and configures both.
+
+### Switching Between UIs
+
+- **To enable React UI:** Click the "New UI" toggle switch in the user menu (top right)
+- **To return to Angular UI:** Log out from the React UI - you'll be automatically returned to the Angular UI
+
+### How It Works
+
+The UI selection is controlled by the `patternfly` cookie:
+- Cookie value `true` or `react` → React UI
+- No cookie or any other value → Angular UI
+
+The server-side logic in `endpoints/web.py` checks this cookie and serves the appropriate UI.
+
+### nginx Configuration
+
+The nginx config serves assets for both UIs:
+- `/static/` → Angular UI assets (`/opt/quay/static/`)
+- `/main.bundle.js`, `/vendor.bundle.js`, etc. → React UI assets (`/opt/quay/web/dist/`)
+- `/images/`, `/assets/` → React UI resources
+
+**Important:** The nginx must only serve specific React bundle files (not all `*.bundle.js`) to avoid intercepting Angular's bundles which have different names like `main-quay-frontend-*.bundle.js`.
+
+### Rebuilding React UI
+
+If you need to rebuild the React UI:
+
+```bash
+cd /opt/quay/web
+ASSET_PATH=/ REACT_QUAY_APP_API_URL=https://registry.gw.lo REACT_APP_QUAY_DOMAIN=registry.gw.lo \
+    NODE_OPTIONS="--openssl-legacy-provider --max-old-space-size=3072" npm run build
+```
+
+---
 
 ## Management Commands
 
